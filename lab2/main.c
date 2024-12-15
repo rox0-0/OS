@@ -68,6 +68,15 @@ int main(int argc, char *argv[]) {
     }
     int *result = (int *)calloc(array_length, sizeof(int));
 
+    // Вывод сгенерированных массивов
+    printf("Generated arrays:\n");
+    for (int i = 0; i < num_arrays; i++) {
+        for (int j = 0; j < array_length; j++) {
+            printf("%d ", arrays[i][j]);
+        }
+        printf("\n");
+    }
+
     // Инициализация мьютекса
     pthread_mutex_t mutex;
     pthread_mutex_init(&mutex, NULL);
