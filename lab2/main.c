@@ -15,12 +15,11 @@ typedef struct {
     pthread_mutex_t *mutex;
 } thread_args_t;
 
-// Функция для обработки строк или колонок массива
 void *process_arrays(void *arg) {
     thread_args_t *args = (thread_args_t *)arg;
 
     if (args->row_split) {
-        // Обработка строк
+        
         for (int i = args->start; i < args->end; ++i) {
             for (int j = 0; j < args->array_length; ++j) {
                 pthread_mutex_lock(args->mutex);
@@ -29,7 +28,7 @@ void *process_arrays(void *arg) {
             }
         }
     } else {
-        // Обработка колонок
+
         for (int i = args->start; i < args->end; ++i) {
             for (int j = 0; j < args->num_arrays; ++j) {
                 pthread_mutex_lock(args->mutex);
@@ -48,7 +47,6 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    // Чтение параметров
     int num_arrays = atoi(argv[1]);
     int array_length = atoi(argv[2]);
     int max_threads = atoi(argv[3]);
@@ -58,17 +56,16 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    // Выделение памяти
     int **arrays = (int **)malloc(num_arrays * sizeof(int *));
     for (int i = 0; i < num_arrays; i++) {
         arrays[i] = (int *)malloc(array_length * sizeof(int));
         for (int j = 0; j < array_length; j++) {
-            arrays[i][j] = rand() % 10; // Заполнение случайными числами
+            arrays[i][j] = rand() % 10; 
         }
     }
     int *result = (int *)calloc(array_length, sizeof(int));
 
-    // Вывод сгенерированных массивов
+
     printf("Generated arrays:\n");
     for (int i = 0; i < num_arrays; i++) {
         for (int j = 0; j < array_length; j++) {
@@ -77,15 +74,15 @@ int main(int argc, char *argv[]) {
         printf("\n");
     }
 
-    // Инициализация мьютекса
+ 
     pthread_mutex_t mutex;
     pthread_mutex_init(&mutex, NULL);
 
-    // Определение стратегии
+   
     bool row_split = (num_arrays / (double)array_length) > 2.0;
     printf("Using %s strategy\n", row_split ? "row_split" : "column_split");
 
-    // Создание потоков
+   
     pthread_t *threads = (pthread_t *)malloc(max_threads * sizeof(pthread_t));
     thread_args_t *thread_args = (thread_args_t *)malloc(max_threads * sizeof(thread_args_t));
 
@@ -106,19 +103,19 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Ожидание завершения потоков
+  
     for (int i = 0; i < max_threads; i++) {
         pthread_join(threads[i], NULL);
     }
 
-    // Вывод результата
+  
     printf("Result array: \n");
     for (int i = 0; i < array_length; i++) {
         printf("%d ", result[i]);
     }
     printf("\n");
 
-    // Очистка памяти
+
     for (int i = 0; i < num_arrays; i++) {
         free(arrays[i]);
     }
@@ -127,7 +124,7 @@ int main(int argc, char *argv[]) {
     free(threads);
     free(thread_args);
 
-    // Уничтожение мьютекса
+
     pthread_mutex_destroy(&mutex);
 
     return EXIT_SUCCESS;
