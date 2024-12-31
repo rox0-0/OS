@@ -1,3 +1,17 @@
+#include "allocator.h"
+#include "buddy_allocator.h"
+#include <stdio.h>
+#include <time.h>
+#include <dlfcn.h>
+
+#define POOL_SIZE (1 << MAX_BUDDY_LEVEL)
+char shared_memory[POOL_SIZE];
+
+typedef struct Item {
+    int identifier;
+    char label[50];
+    float data;
+} Item;
 int main() {
     void* basic_allocator_lib = dlopen("./libbasic_allocator.so", RTLD_LAZY);
     if (!basic_allocator_lib) {
