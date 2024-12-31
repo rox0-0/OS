@@ -1,3 +1,5 @@
+#include "buddy_manager.h"
+#include <math.h>
 BuddyManager* initialize_buddy(void* memory_pool, size_t pool_size) {
     if (pool_size < (1 << MAX_BUDDY_LEVEL)) return NULL;
 
