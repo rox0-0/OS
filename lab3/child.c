@@ -1,128 +1,116 @@
+#include <unistd.h>
+#include <stdio.h>
+#include <limits.h>
+#include <sys/mman.h>
 #include <fcntl.h>
 #include <semaphore.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <limits.h>
-#include <errno.h>
-#include <stdio.h>
 
-#define SHM_NAME "/my_shared_memory"
-#define SEM_PARENT_NAME "/sem_parent"
-#define SEM_CHILD_NAME "/sem_child"
-#define SHM_SIZE 1024
+#define SHM_NAME "/shared_memory"
+#define SEM_NAME "/sync_semaphore"
+#define BUFFER_SIZE 1024
+#define NUM_LINES 100
 
-#define BUFFER_SIZE 512
-
-typedef enum {
-    SUCCESS = 0,
-    INVALID_INPUT,
-    DIVISION_BY_ZERO,
-    INT_OVERFLOW,
-} ERROR_CODES;
-
-ERROR_CODES string_to_int(const char *str_number, int *int_result) {
-    if (str_number == NULL || int_result == NULL)
-        return INVALID_INPUT;
-
-    char *endptr;
-    errno = 0;
-    long result = strtol(str_number, &endptr, 10);
-
-    if ((result == LONG_MAX || result == LONG_MIN) && errno == ERANGE)
-        return INT_OVERFLOW;
-    else if (*endptr != '\0' || result > INT_MAX || result < INT_MIN)
-        return INVALID_INPUT;
-
-    *int_result = (int)result;
-    return SUCCESS;
+void HandleError(const char *message) {
+    write(STDERR_FILENO, message, strlen(message));
+    exit(EXIT_FAILURE);
 }
 
-void error_print(const char *error_str) {
-    if (error_str == NULL) {
-        write(STDOUT_FILENO, "ERROR\n", 6);
-    } else {
-        write(STDOUT_FILENO, error_str, strlen(error_str));
+int my_strtol(const char *str, char **endptr) {
+    long value = strtol(str, endptr, 10);
+    if (value > INT_MAX || value < INT_MIN) {
+        HandleError("ERROR: overflow int\n");
     }
-}
-
-void print_division_result(int result) {
-    char buffer[BUFFER_SIZE];
-    int length = snprintf(buffer, sizeof(buffer), "Division result: %d\n", result);
-    write(STDOUT_FILENO, buffer, length);
+    return (int)value;
 }
 
 int main() {
- 
-    int shm_fd = shm_open(SHM_NAME, O_RDWR, 0666);
+    int shm_fd;
+    char *shared_mem;
+    sem_t *semaphore;
+
+    shm_fd = shm_open(SHM_NAME, O_RDWR, 0666);
     if (shm_fd == -1) {
-        error_print("Failed to open shared memory\n");
-        exit(EXIT_FAILURE);
+        HandleError("ERROR: wrong connection to shared memory.\n");
     }
 
-    void *shm_ptr = mmap(0, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    if (shm_ptr == MAP_FAILED) {
-        error_print("Failed to map shared memory\n");
-        exit(EXIT_FAILURE);
+    shared_mem = mmap(NULL, BUFFER_SIZE * NUM_LINES, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (shared_mem == MAP_FAILED) {
+        HandleError("ERROR: wrong showing shared memory\n");
     }
 
-    
-    sem_t *sem_parent = sem_open(SEM_PARENT_NAME, 0);
-    sem_t *sem_child = sem_open(SEM_CHILD_NAME, 0);
-    if (sem_parent == SEM_FAILED || sem_child == SEM_FAILED) {
-        error_print("Failed to open semaphores\n");
+    semaphore = sem_open(SEM_NAME, 0);
+    if (semaphore == SEM_FAILED) {
+        HandleError("ERROR: broken connection to semaphore\n");
+    }
+
+    sem_wait(semaphore);
+
+    char filename[BUFFER_SIZE];
+    strncpy(filename, shared_mem, BUFFER_SIZE);
+
+    int file = open(filename, O_RDONLY);
+    if (file == -1) {
+        strncpy(shared_mem, "ERROR: broken file opening\n", BUFFER_SIZE);
+        sem_post(semaphore);
         exit(EXIT_FAILURE);
     }
 
     char buffer[BUFFER_SIZE];
-    while (1) {
-        
-        sem_wait(sem_child);
+    ssize_t bytesRead;
+    int first_number, next_number;
+    char *current;
+    int line_number = 0;
 
-        
-        strncpy(buffer, (char *)shm_ptr, BUFFER_SIZE - 1);
-        buffer[BUFFER_SIZE - 1] = '\0';
+    while ((bytesRead = read(file, buffer, BUFFER_SIZE)) > 0) {
+        current = buffer;
 
-        if (strcmp(buffer, "EOF") == 0) {
-            break; 
+        while (current < buffer + bytesRead) {
+            while (*current == ' ' || *current == '\t') current++;
+            if (*current == '\n') {
+                current++;
+                continue;
+            }
+
+            char *endptr;
+            first_number = my_strtol(current, &endptr);
+            current = endptr;
+
+            char result[BUFFER_SIZE];
+            int result_len = snprintf(result, BUFFER_SIZE, "Division result: %d", first_number);
+
+            while (current < buffer + bytesRead && *current != '\n') {
+                while (*current == ' ' || *current == '\t') current++;
+                if (*current == '\n') break;
+
+                next_number = my_strtol(current, &endptr);
+                if (next_number == 0) {
+                    strncpy(shared_mem + line_number * BUFFER_SIZE, "ERROR: null division \n", BUFFER_SIZE);
+                    sem_post(semaphore);
+                    exit(EXIT_FAILURE);
+                }
+
+                result_len += snprintf(result + result_len, BUFFER_SIZE - result_len, ", %d / %d = %d",
+                                       first_number, next_number, first_number / next_number);
+                current = endptr;
+            }
+
+            result[result_len++] = '\n';
+            strncpy(shared_mem + line_number * BUFFER_SIZE, result, result_len);
+            line_number++;
+
+            if (line_number >= NUM_LINES) break;
         }
-
-        int result = 0;
-        int is_first_number = 1;
-
-        char *token = strtok(buffer, " ");
-        while (token != NULL) {
-            int current_value;
-            ERROR_CODES error = string_to_int(token, &current_value);
-
-            if (error != SUCCESS) {
-                error_print("ERROR: Invalid input or overflow\n");
-                exit(error);
-            }
-            if (current_value == 0) {
-                error_print("ERROR: Division by zero\n");
-                exit(DIVISION_BY_ZERO);
-            }
-
-            if (is_first_number) {
-                result = current_value;
-                is_first_number = 0;
-            } else {
-                result /= current_value;
-            }
-
-            token = strtok(NULL, " ");
-        }
-
-        print_division_result(result);
-        sem_post(sem_parent); 
     }
 
-    munmap(shm_ptr, SHM_SIZE);
-    sem_close(sem_parent);
-    sem_close(sem_child);
+    if (bytesRead == -1) {
+        strncpy(shared_mem, "ERROR: broken reading for file\n", BUFFER_SIZE);
+        sem_post(semaphore);
+        exit(EXIT_FAILURE);
+    }
 
-    return 0;
+    close(file);
+    sem_post(semaphore);
+    exit(EXIT_SUCCESS);
 }
