@@ -1,93 +1,90 @@
+#include <unistd.h>
+#include <sys/mman.h>
 #include <fcntl.h>
 #include <semaphore.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <sys/wait.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
 
-#define SHM_NAME "/my_shared_memory"
-#define SEM_PARENT_NAME "/sem_parent"
-#define SEM_CHILD_NAME "/sem_child"
-#define SHM_SIZE 1024
+#define SHM_NAME "/shared_memory"
+#define SEM_NAME "/sync_semaphore"
+#define BUFFER_SIZE 1024
+#define NUM_LINES 100
 
-void error_print(const char *str) {
-    if (str == NULL) {
-        write(STDERR_FILENO, "ERROR\n", 6);
-    } else {
-        write(STDERR_FILENO, str, strlen(str));
-    }
+void error_handler(const char *msg) {
+    write(STDERR_FILENO, msg, strlen(msg));
+    write(STDERR_FILENO, "\n", 1);
     exit(EXIT_FAILURE);
 }
 
-int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        error_print("Wrong input, try one file\n");
-    }
+int main() {
+    int shm_fd;
+    char *shared_mem;
+    sem_t *semaphore;
+    ssize_t bytesRead;
 
-    FILE *file = fopen(argv[1], "r");
-    if (!file) {
-        error_print("File didn't open\n");
-    }
-
-    int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
     if (shm_fd == -1) {
-        error_print("Failed to create shared memory\n");
-    }
-    if (ftruncate(shm_fd, SHM_SIZE) == -1) {
-        error_print("Failed to set size of shared memory\n");
+        error_handler("ERROR: broken creation of shared memory");
     }
 
-    void *shm_ptr = mmap(0, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    if (shm_ptr == MAP_FAILED) {
-        error_print("Failed to map shared memory\n");
+    if (ftruncate(shm_fd, BUFFER_SIZE * NUM_LINES) == -1) {
+        error_handler("ERROR: broken size changing for shared memory");
     }
 
-    sem_t *sem_parent = sem_open(SEM_PARENT_NAME, O_CREAT, 0666, 1);
-    sem_t *sem_child = sem_open(SEM_CHILD_NAME, O_CREAT, 0666, 0);
-    if (sem_parent == SEM_FAILED || sem_child == SEM_FAILED) {
-        error_print("Failed to create semaphores\n");
+    shared_mem = mmap(NULL, BUFFER_SIZE * NUM_LINES, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (shared_mem == MAP_FAILED) {
+        error_handler("ERROR: broken displaying for shared memory");
     }
 
-    pid_t pid = fork();
+    semaphore = sem_open(SEM_NAME, O_CREAT, 0666, 0);
+    if (semaphore == SEM_FAILED) {
+        error_handler("ERROR: broken semaphore creation");
+    }
 
-    if (pid == 0) {
-      
+    char filename[BUFFER_SIZE];
+    const char *prompt = "Put file name : ";
+    write(STDOUT_FILENO, prompt, strlen(prompt));
+    bytesRead = read(STDIN_FILENO, filename, sizeof(filename));
+    if (bytesRead <= 0) {
+        error_handler("ERROR: error of reading filename");
+    }
+
+    size_t len = strlen(filename);
+    if (len > 0 && filename[len - 1] == '\n') {
+        filename[len - 1] = '\0';
+    }
+
+    strncpy(shared_mem, filename, BUFFER_SIZE);
+
+    pid_t child_pid = fork();
+    if (child_pid == -1) {
+        error_handler("ERROR: error of creating child process");
+    }
+
+    if (child_pid == 0) {
         execl("./child", "./child", NULL);
-        error_print("execl failed\n");
-    } else if (pid < 0) {
-        error_print("fork failed\n");
+        error_handler("ERROR: error in child process");
     } else {
+        sem_post(semaphore);
 
-        char file_buffer[BUFSIZ];
-        while (fgets(file_buffer, sizeof(file_buffer), file) != NULL) {
-
-            sem_wait(sem_parent);
-
-    
-            strncpy((char *)shm_ptr, file_buffer, SHM_SIZE - 1);
-            ((char *)shm_ptr)[SHM_SIZE - 1] = '\0'; 
-
-
-            sem_post(sem_child);
-        }
-
-        sem_wait(sem_parent);
-        strncpy((char *)shm_ptr, "EOF", SHM_SIZE);
-        sem_post(sem_child);
         wait(NULL);
 
-        // Очистка
-        fclose(file);
-        munmap(shm_ptr, SHM_SIZE);
-        shm_unlink(SHM_NAME);
-        sem_close(sem_parent);
-        sem_close(sem_child);
-        sem_unlink(SEM_PARENT_NAME);
-        sem_unlink(SEM_CHILD_NAME);
-    }
+        for (int i = 0; i < NUM_LINES; i++) {
+            if (strlen(shared_mem + i * BUFFER_SIZE) > 0) {
+                write(
+                        STDOUT_FILENO, shared_mem + i * BUFFER_SIZE, strlen(
+                                shared_mem + i * BUFFER_SIZE
+                                )
+                        );
+            }
+        }
 
-    return 0;
+        munmap(shared_mem, BUFFER_SIZE * NUM_LINES);
+        shm_unlink(SHM_NAME);
+        sem_close(semaphore);
+        sem_unlink(SEM_NAME);
+
+        exit(EXIT_SUCCESS);
+    }
 }
